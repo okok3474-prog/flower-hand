@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flower Gesture Controller</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; }
+        #mainVideo { width: 100vw; height: 100vh; object-fit: cover; display: block; }
+        #pipContainer {
+            position: absolute; right: 20px; bottom: 20px; width: 200px; height: 150px;
+            border: 2px solid rgba(255, 255, 255, 0.5); border-radius: 8px; overflow: hidden;
+            transform: scaleX(-1); background: #222; z-index: 10;
+        }
+        #webcam, #outputCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        #status {
+            position: absolute; left: 20px; top: 20px; color: white; font-family: sans-serif;
+            background: rgba(0, 0, 0, 0.5); padding: 10px; border-radius: 5px; pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <video id="mainVideo" playsinline preload="auto">
+        <source src="flower_timelapse.mp4" type="video/mp4">
+    </video>
+
+    <div id="pipContainer">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="outputCanvas"></canvas>
+    </div>
+
+    <div id="status">영상을 불러오는 중...</div>
+
+    <script>
+        const videoElement = document.getElementById('mainVideo');
+        const webcamElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('outputCanvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const statusDisplay = document.getElementById('status');
+
+        const MIN_RATIO = 1.0;
+        const MAX_RATIO = 2.2;
+        let targetProgress = 0;
+        let currentProgress = 0;
+        const LERP_FACTOR = 0.12;
+
+        function getDistance(p1, p2) {
+            return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+        }
+
+        // 영상이 준비되면 첫 프레임 표시
+        videoElement.addEventListener('loadeddata', () => {
+            videoElement.currentTime = 0;
+            statusDisplay.innerText = "준비 완료! 손을 보여주세요.";
+        });
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
+                drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 2});
+
+                const wrist = landmarks[0];
+                const middleMcp = landmarks[9];
+                const tips = [landmarks[8], landmarks[12], landmarks[16], landmarks[20]];
+
+                const palmSize = getDistance(wrist, middleMcp);
+                const totalTipDist = tips.reduce((sum, tip) => sum + getDistance(wrist, tip), 0);
+                const avgTipDist = totalTipDist / 4;
+
+                const currentRatio = avgTipDist / palmSize;
+                let normalized = (currentRatio - MIN_RATIO) / (MAX_RATIO - MIN_RATIO);
+                normalized = Math.max(0, Math.min(1, normalized));
+
+                targetProgress = normalized;
+                statusDisplay.innerText = `꽃 피우기: ${(normalized * 100).toFixed(0)}%`;
+            }
+            canvasCtx.restore();
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        hands.onResults(onResults);
+
+        const camera = new Camera(webcamElement, {
+            onFrame: async () => { await hands.send({image: webcamElement}); },
+            width: 640, height: 480
+        });
+        camera.start();
+
+        function updateVideo() {
+            if (videoElement.readyState >= 2 && videoElement.duration) {
+                currentProgress += (targetProgress - currentProgress) * LERP_FACTOR;
+                // seek 위치 업데이트
+                videoElement.currentTime = currentProgress * videoElement.duration;
+            }
+            requestAnimationFrame(updateVideo);
+        }
+
+        window.onload = () => {
+            canvasElement.width = 640;
+            canvasElement.height = 480;
+            updateVideo();
+        };
+    </script>
+</body>
+</html>
